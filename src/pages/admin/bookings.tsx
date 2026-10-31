@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { api } from '../../lib/api'
+import { useBookingSync } from '../../lib/realtime'
 import { BookingStatus, type Booking } from '../../types'
 import { Button } from '../../components/ui/button'
 import { Select } from '../../components/ui/input'
@@ -60,6 +61,18 @@ function rangeLabel(view: View, anchor: Date) {
   return anchor.toLocaleDateString([], { month: 'long', year: 'numeric' })
 }
 
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
+}
+
+function paymentLabel(status?: string) {
+  if (status === 'PAID') return 'Paid online'
+  if (status === 'DUE') return 'Pay later'
+  if (status === 'CREATED') return 'Checkout open'
+  if (status === 'FAILED') return 'Payment failed'
+  return 'No online payment'
+}
+
 function hourRange(items: Booking[]) {
   let start = 10
   let end = 19
@@ -97,6 +110,7 @@ export function AdminBookingsPage() {
   const [view, setView] = useState<View>('day')
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()))
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const tick = useBookingSync((state) => state.tick)
 
   async function load() {
     const [bookingsResponse, staffResponse] = await Promise.all([
@@ -109,7 +123,7 @@ export function AdminBookingsPage() {
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [tick])
 
   const visibleBookings = useMemo(() => {
     if (view === 'day') return bookings.filter((booking) => sameDay(booking.startAt, anchor))
@@ -239,6 +253,13 @@ export function AdminBookingsPage() {
                 · {formatTime(selected.startAt)} – {formatTime(selected.endAt)}
               </p>
               {selected.notes ? <p className="rounded-2xl bg-[#f7f4ef] px-3 py-2 text-muted">{selected.notes}</p> : null}
+              <p>
+                {paymentLabel(selected.payment?.status)}
+                {selected.payment ? ` · ${formatMoney(selected.payment.amountPaise / 100)}` : ''}
+              </p>
+              {selected.payment?.razorpayPaymentId ? (
+                <p className="break-all text-xs text-muted">{selected.payment.razorpayPaymentId}</p>
+              ) : null}
               <label className="grid gap-2">
                 <span className="text-[13px] font-semibold text-ink/75">Status</span>
                 <Select

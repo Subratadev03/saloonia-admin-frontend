@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/api'
+import { useBookingSync } from '../../lib/realtime'
 import type { Booking } from '../../types'
 import { AdminHeading, Avatar, Panel } from '../../components/admin/panel'
 import { Input } from '../../components/ui/input'
@@ -17,10 +18,11 @@ export function AdminCustomersPage() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const tick = useBookingSync((state) => state.tick)
 
   useEffect(() => {
     api.get<Booking[]>('/bookings').then(({ data }) => setBookings(data))
-  }, [])
+  }, [tick])
 
   const guests = useMemo(() => {
     const map = new Map<string, Guest>()

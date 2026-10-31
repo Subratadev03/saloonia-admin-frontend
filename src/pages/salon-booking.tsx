@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { CalendarClock, Check } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, getErrorMessage } from '../lib/api'
+import { payBooking, priceToPaise, releasesHold } from '../lib/razorpay'
+import { useBookingSync, watchSalon } from '../lib/realtime'
 import { useAuthStore } from '../store/auth-store'
-import type { PublicSalon, SalonService, Slot } from '../types'
-import { Role } from '../types'
+import type { Booking, PublicSalon, SalonService, Slot } from '../types'
+import { BookingStatus, Role } from '../types'
 import { Button } from '../components/ui/button'
 import { Badge, Card } from '../components/ui/card'
 import { Field, Input, Select, Textarea } from '../components/ui/input'
@@ -38,6 +40,8 @@ export function SalonBookingPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [intent, setIntent] = useState<'now' | 'later' | null>(null)
+  const tick = useBookingSync((state) => state.tick)
 
   useEffect(() => {
     if (!slug) return
@@ -55,16 +59,25 @@ export function SalonBookingPage() {
   )
 
   useEffect(() => {
+    if (!slug) return
+    return watchSalon(slug)
+  }, [slug])
+
+  useEffect(() => {
     if (!slug || !serviceId || !date) return
     const params = new URLSearchParams({ date, serviceId })
     if (staffId) params.set('staffId', staffId)
     api.get<Slot[]>(`/public/salons/${slug}/slots?${params.toString()}`).then(({ data }) => {
       setSlots(data)
-      setSelectedSlot(null)
+      setSelectedSlot((current) =>
+        current && data.some((slot) => slot.startAt === current.startAt && slot.staffId === current.staffId)
+          ? current
+          : null,
+      )
     })
-  }, [slug, serviceId, staffId, date])
+  }, [slug, serviceId, staffId, date, tick])
 
-  async function book() {
+  async function book(payNow = true) {
     if (!selectedSlot || !slug) return
     if (!user) {
       navigate('/login')
@@ -75,20 +88,76 @@ export function SalonBookingPage() {
       return
     }
     setLoading(true)
+    setIntent(payNow ? 'now' : 'later')
     setError('')
     setMessage('')
+    if (user.role !== Role.CUSTOMER) {
+      try {
+        await api.post(`/public/salons/${slug}/bookings`, {
+          serviceId,
+          staffId: selectedSlot.staffId,
+          startAt: selectedSlot.startAt,
+          notes,
+        })
+        setMessage('Booked. You can review it in your bookings.')
+        useBookingSync.getState().bump()
+      } catch (err) {
+        setError(getErrorMessage(err, 'Could not complete booking'))
+        useBookingSync.getState().bump()
+      } finally {
+        setLoading(false)
+        setIntent(null)
+      }
+      return
+    }
+    if (!selectedService) {
+      setLoading(false)
+      setIntent(null)
+      return
+    }
+    let bookingId = ''
     try {
-      await api.post(`/public/salons/${slug}/bookings`, {
+      const { data } = await api.post<Booking>(`/public/salons/${slug}/bookings`, {
         serviceId,
         staffId: selectedSlot.staffId,
         startAt: selectedSlot.startAt,
         notes,
+        payLater: !payNow,
       })
-      setMessage('Booked. You can review it in your bookings.')
+      bookingId = data.id
+      if (!payNow) {
+        setMessage('The chair is booked. You can pay at the salon, or pay later from your bookings.')
+        useBookingSync.getState().bump()
+        return
+      }
+      const result = await payBooking({
+        bookingId: data.id,
+        amount: priceToPaise(selectedService.price),
+        name: salon?.name ?? 'Saloonia',
+        description: selectedService.name,
+        prefill: {
+          name: `${user.firstName} ${user.lastName}`.trim(),
+          email: user.email,
+          contact: user.phone ?? '',
+        },
+        onFailed: (reason) => setError(reason),
+      })
+      if (result === 'dismissed') {
+        await api.patch(`/bookings/${data.id}/status`, { status: BookingStatus.CANCELLED }).catch(() => undefined)
+        setMessage('Payment cancelled. The chair was released.')
+      } else {
+        setMessage('Paid. The chair is booked.')
+      }
+      useBookingSync.getState().bump()
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not complete booking'))
+      if (bookingId && releasesHold(err)) {
+        await api.patch(`/bookings/${bookingId}/status`, { status: BookingStatus.CANCELLED }).catch(() => undefined)
+      }
+      setError(getErrorMessage(err, err instanceof Error ? err.message : 'Could not complete booking'))
+      useBookingSync.getState().bump()
     } finally {
       setLoading(false)
+      setIntent(null)
     }
   }
 
@@ -207,16 +276,20 @@ export function SalonBookingPage() {
           ) : null}
           {error ? <p className="mt-3 text-sm text-rose-deep">{error}</p> : null}
           {message ? <p className="mt-3 text-sm text-moss">{message}</p> : null}
-          <Button
-            className="mt-6 w-full"
-            size="lg"
-            disabled={!selectedSlot || loading}
-            loading={loading}
-            icon={<CalendarClock className="relative h-4 w-4" />}
-            onClick={book}
-          >
-            {user ? (loading ? 'Holding the chair…' : 'Confirm booking') : 'Sign in to book'}
-          </Button>
+          {user?.role === Role.CUSTOMER ? (
+            <div className="mt-6 grid gap-2">
+              <Button className="w-full" size="lg" disabled={!selectedSlot || loading} loading={intent === 'now'} icon={<CalendarClock className="relative h-4 w-4" />} onClick={() => book(true)}>
+                {intent === 'now' ? 'Opening checkout…' : selectedService ? `Pay now ${formatMoney(selectedService.price)}` : 'Pay now'}
+              </Button>
+              <Button className="w-full" size="lg" variant="secondary" disabled={!selectedSlot || loading} onClick={() => book(false)}>
+                {intent === 'later' ? 'Booking…' : 'Pay later'}
+              </Button>
+            </div>
+          ) : (
+            <Button className="mt-6 w-full" size="lg" disabled={!selectedSlot || loading} loading={loading} icon={<CalendarClock className="relative h-4 w-4" />} onClick={() => book(true)}>
+              {user ? (loading ? 'Holding the chair…' : 'Confirm booking') : 'Sign in to book'}
+            </Button>
+          )}
         </Card>
       </div>
     </div>

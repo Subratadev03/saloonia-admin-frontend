@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   CalendarRange,
+  CreditCard,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -22,6 +23,7 @@ import { cn } from '../../lib/cn'
 const adminLinks = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/calendar', label: 'Calendar', icon: CalendarRange },
+  { to: '/admin/payments', label: 'Payments', icon: CreditCard },
   { to: '/admin/staff', label: 'Stylists', icon: Users },
   { to: '/admin/customers', label: 'Customers', icon: UserRound },
   { to: '/admin/services', label: 'Services', icon: Scissors },

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { api } from '../lib/api'
+import { api, getErrorMessage } from '../lib/api'
+import { payBooking, priceToPaise } from '../lib/razorpay'
+import { useBookingSync } from '../lib/realtime'
+import { useAuthStore } from '../store/auth-store'
 import { BookingStatus, type Booking } from '../types'
 import { Badge, Card } from '../components/ui/card'
 import { Button, ButtonLink } from '../components/ui/button'
@@ -13,7 +16,11 @@ function toneFor(status: Booking['status']) {
 }
 
 export function CustomerBookingsPage() {
+  const user = useAuthStore((state) => state.user)
   const [bookings, setBookings] = useState<Booking[]>([])
+  const [error, setError] = useState('')
+  const [payingId, setPayingId] = useState('')
+  const tick = useBookingSync((state) => state.tick)
 
   async function load() {
     const { data } = await api.get<Booking[]>('/bookings')
@@ -22,11 +29,37 @@ export function CustomerBookingsPage() {
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [tick])
 
   async function cancel(id: string) {
     await api.patch(`/bookings/${id}/status`, { status: BookingStatus.CANCELLED })
     await load()
+  }
+
+  async function pay(booking: Booking) {
+    if (!user || !booking.service) return
+    setPayingId(booking.id)
+    setError('')
+    try {
+      const result = await payBooking({
+        bookingId: booking.id,
+        amount: priceToPaise(booking.service.price),
+        name: booking.tenant?.name ?? 'Saloonia',
+        description: booking.service.name,
+        prefill: {
+          name: `${user.firstName} ${user.lastName}`.trim(),
+          email: user.email,
+          contact: user.phone ?? '',
+        },
+        onFailed: (reason) => setError(reason),
+      })
+      if (result === 'dismissed') setError('Checkout closed. You can pay again while the chair is held.')
+      await load()
+    } catch (err) {
+      setError(getErrorMessage(err, err instanceof Error ? err.message : 'Payment could not be completed.'))
+    } finally {
+      setPayingId('')
+    }
   }
 
   return (
@@ -40,6 +73,7 @@ export function CustomerBookingsPage() {
           Book another salon
         </ButtonLink>
       </div>
+      {error ? <p className="mt-4 text-sm text-rose-deep">{error}</p> : null}
       <div className="mt-8 grid gap-4">
         {bookings.length === 0 ? (
           <Card className="p-8 text-muted">No bookings yet. Pick a salon and take a slot.</Card>
@@ -59,7 +93,12 @@ export function CustomerBookingsPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge tone={toneFor(booking.status)}>{booking.status}</Badge>
-                  {booking.status === BookingStatus.CONFIRMED ? (
+                  {booking.service && booking.payment?.status !== 'PAID' && (booking.status === BookingStatus.PENDING || booking.payment?.status === 'DUE') ? (
+                    <Button size="sm" disabled={payingId === booking.id} onClick={() => pay(booking)}>
+                      {payingId === booking.id ? 'Opening checkout…' : 'Pay now'}
+                    </Button>
+                  ) : null}
+                  {booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.PENDING ? (
                     <Button size="sm" variant="secondary" onClick={() => cancel(booking.id)}>
                       Cancel
                     </Button>

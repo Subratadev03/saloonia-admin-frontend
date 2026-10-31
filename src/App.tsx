@@ -15,12 +15,15 @@ import { AdminServicesPage } from './pages/admin/services'
 import { AdminStaffPage } from './pages/admin/staff'
 import { AdminSettingsPage } from './pages/admin/settings'
 import { AdminAdsPage } from './pages/admin/ads'
+import { AdminPaymentsPage } from './pages/admin/payments'
 import { PlatformSalonsPage } from './pages/platform/salons'
 import { Role } from './types'
+import { RealtimeBridge } from './lib/realtime'
 
 export default function App() {
   return (
     <BrowserRouter>
+      <RealtimeBridge />
       <Routes>
         <Route element={<PublicLayout />}>
           <Route path="/" element={<LandingPage />} />
@@ -42,6 +45,7 @@ export default function App() {
             <Route path="/admin/calendar" element={<AdminBookingsPage />} />
             <Route path="/admin/bookings" element={<Navigate to="/admin/calendar" replace />} />
             <Route path="/admin/customers" element={<AdminCustomersPage />} />
+            <Route path="/admin/payments" element={<AdminPaymentsPage />} />
             <Route path="/admin/services" element={<AdminServicesPage />} />
             <Route path="/admin/ads" element={<AdminAdsPage />} />
             <Route path="/admin/staff" element={<AdminStaffPage />} />

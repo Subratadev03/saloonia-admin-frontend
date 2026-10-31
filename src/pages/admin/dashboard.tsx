@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/api'
+import { useBookingSync } from '../../lib/realtime'
 import type { Booking } from '../../types'
 import { BookingStatus } from '../../types'
 import { AdminHeading, Avatar, Panel } from '../../components/admin/panel'
@@ -21,6 +22,7 @@ export function AdminDashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [bookings, setBookings] = useState<Booking[]>([])
   const [staff, setStaff] = useState<StaffMember[]>([])
+  const tick = useBookingSync((state) => state.tick)
 
   useEffect(() => {
     Promise.all([
@@ -32,7 +34,7 @@ export function AdminDashboardPage() {
       setBookings(bookingsResponse.data)
       setStaff(staffResponse.data)
     })
-  }, [])
+  }, [tick])
 
   const today = startOfDay(new Date())
   const todaysBookings = bookings
